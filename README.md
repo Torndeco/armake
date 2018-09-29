@@ -1,3 +1,7 @@
+======
+Example of usage for DayZSA  
+`armake_w32.exe build foo\\addons\\foo\\scripts D:\\SteamLibrary\\common\\DayZServer\\foo\\Addons\\foo.pbo -e revision=1 -e prefix=foo\\scripts --force`  
+
 armake
 ======
 
