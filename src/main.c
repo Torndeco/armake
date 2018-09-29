@@ -34,6 +34,7 @@
 #include "filesystem.h"
 #include "keygen.h"
 #include "sign.h"
+#include "version.h"
 
 
 void print_usage() {
@@ -90,14 +91,7 @@ void print_usage() {
            "\n"
            "    Example: \"-w unquoted-string\" disables warnings about improperly quoted\n"
            "             strings.\n"
-           "\n"
-           "BI tools on Windows:\n"
-           "    Since armake's P3D converter is not finished yet, armake attempts to find\n"
-           "    and use BI's binarize.exe on Windows systems. If you don't want this to\n"
-           "    happen and use armake's instead, pass the environment variable NATIVEBIN.\n"
-           "\n"
-           "    Since binarize.exe's output is usually excessively verbose, it is hidden\n"
-           "    by default. Pass BIOUTPUT to display it.\n");
+           "\n");
 }
 
 
@@ -127,7 +121,8 @@ int read_args(int argc, char *argv[]) {
         { "-k", "--key", &args.privatekey, NULL },
         { "-s", "--signature", &args.signature, NULL },
         { "-d", "--indent", &args.indent, NULL },
-        { "-t", "--type", &args.paatype, NULL }
+        { "-t", "--type", &args.paatype, NULL },
+        { "-T", "--temppath", &args.temppath, NULL }
     };
 
     const struct arg_option multi_options[] = {

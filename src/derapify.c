@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 #include <math.h>
 
 #ifdef _WIN32
@@ -33,6 +32,7 @@
 #include "rapify.h"
 #include "utils.h"
 #include "derapify.h"
+#include "unistdwrapper.h"
 
 
 int skip_array(FILE *f) {
@@ -844,6 +844,7 @@ int derapify_file(char *source, char *target) {
     int success;
 #ifdef _WIN32
     char temp_name[2048];
+    wchar_t wc_temp_name[2048];
 #endif
 
     if (strcmp(source, "-") == 0)
@@ -854,10 +855,11 @@ int derapify_file(char *source, char *target) {
     // Open source
     if (strcmp(source, "-") == 0) {
 #ifdef _WIN32
-        if (!GetTempFileName(".", "amk", 0, temp_name)) {
+        if (!GetTempFileName(L".", L"amk", 0, wc_temp_name)) {
             errorf("Failed to get temp file name (system error %i).\n", GetLastError());
             return 1;
         }
+        wcstombs(temp_name, wc_temp_name, 2048);
         f_source = fopen(temp_name, "wb+");
 #else
         f_source = tmpfile();
@@ -866,7 +868,7 @@ int derapify_file(char *source, char *target) {
         if (!f_source) {
             errorf("Failed to open temp file.\n");
 #ifdef _WIN32
-            DeleteFile(temp_name);
+            DeleteFile(wc_temp_name);
 #endif
             return 1;
         }
@@ -909,7 +911,7 @@ int derapify_file(char *source, char *target) {
 
 #ifdef _WIN32
     if (strcmp(source, "-") == 0)
-        DeleteFile(temp_name);
+        DeleteFile(wc_temp_name);
 #endif
 
     if (strcmp(target, "-") != 0)

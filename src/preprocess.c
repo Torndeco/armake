@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
 
 #ifdef _WIN32
@@ -37,6 +36,7 @@
 #include "filesystem.h"
 #include "utils.h"
 #include "preprocess.h"
+#include "unistdwrapper.h"
 
 
 #define IS_MACRO_CHAR(x) ( (x) == '_' || \
@@ -575,31 +575,42 @@ int find_file_helper(char *includepath, char *origin, char *includefolder, char 
     HANDLE handle = NULL;
     char mask[2048];
 
-    GetFullPathName(includefolder, 2048, includefolder, NULL);
+    wchar_t wc_filename[2048];
+    mbstowcs(wc_filename, filename, 2048);
 
-    GetFullPathName(cwd, 2048, mask, NULL);
-    sprintf(mask, "%s\\*", mask);
+    wchar_t wc_includefolder[2048];
+    mbstowcs(wc_includefolder, includefolder, 2048);
+    wchar_t wc_includefolder_full[2048];
+    GetFullPathName(wc_includefolder, 2048, wc_includefolder_full, NULL);
 
-    handle = FindFirstFile(mask, &file);
+    wchar_t wc_cwd[2048];
+    mbstowcs(wc_cwd, cwd, 2048);
+    wchar_t wc_mask[2048];
+    GetFullPathName(wc_cwd, 2048, wc_mask, NULL);
+    swprintf(wc_mask, 2048, L"%s\\*", wc_mask);
+
+    handle = FindFirstFile(wc_mask, &file);
     if (handle == INVALID_HANDLE_VALUE)
         return 1;
 
     do {
-        if (strcmp(file.cFileName, ".") == 0 || strcmp(file.cFileName, "..") == 0)
+        if (wcscmp(file.cFileName, L".") == 0 || wcscmp(file.cFileName, L"..") == 0)
             continue;
 
-        if (strcmp(file.cFileName, ".git") == 0)
+        if (wcscmp(file.cFileName, L".git") == 0)
             continue;
 
-        GetFullPathName(cwd, 2048, mask, NULL);
-        sprintf(mask, "%s\\%s", mask, file.cFileName);
+        GetFullPathName(wc_cwd, 2048, wc_mask, NULL);
+        swprintf(wc_mask, 2048, L"%s\\%s", wc_mask, file.cFileName);
+        wcstombs(mask, wc_mask, 2048);
+
         if (file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (!find_file_helper(includepath, origin, includefolder, actualpath, mask)) {
                 FindClose(handle);
                 return 0;
             }
         } else {
-            if (strcmp(filename, file.cFileName) == 0 && matches_includepath(mask, includepath, includefolder)) {
+            if (wcscmp(wc_filename, file.cFileName) == 0 && matches_includepath(mask, includepath, includefolder)) {
                 strncpy(actualpath, mask, 2048);
                 FindClose(handle);
                 return 0;
@@ -723,6 +734,7 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
     char includepath[2048];
     char actualpath[2048];
     FILE *f_source;
+    bool enum_ignore = false;
 
     current_target = source;
 
@@ -806,6 +818,7 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
                 buffer = (char *)safe_realloc(buffer, strlen(buffer) + 2 + buffsize);
                 strcpy(buffer + strlen(buffer) - 2, ptr);
                 free(ptr);
+                ptr = NULL;
             }
 
             // Add trailing new line if necessary
@@ -865,6 +878,7 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
             if ((strlen(buffer) < 5 || strncmp(buffer, "#else", 5) != 0) &&
                     (strlen(buffer) < 6 || strncmp(buffer, "#endif", 6) != 0)) {
                 free(buffer);
+                buffer = NULL;
                 continue;
             }
         }
@@ -874,6 +888,34 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
         // if (constants[1].value == 0)
         //     constants[1].value = (char *)safe_malloc(16);
         // sprintf(constants[1].value, "%i", line - 1);
+
+
+        // Ignore enum (todo: rewrite, its abit hacky)
+        //   scans for next occurance of ; and ignores everything inbetween.
+        //   alot of a1/2 configs use enums etc 
+        if (!enum_ignore) {
+            if ((strncmp(buffer, "enum ", 5) == 0) || (strncmp(buffer, "enum\t", 5) == 0)) {
+                enum_ignore = true;
+            }
+        }
+        if (enum_ignore) {
+            if (strchr(buffer, ';')) {
+                ptr = buffer;
+                bool loop = true;
+                while (loop) {
+                    if (*ptr == ';')
+                        loop = false;
+                    *ptr = ' ';
+                    ptr++;
+                }
+                trim_leading(buffer, strlens(buffer) + 1);
+                enum_ignore = false;
+            } else {
+                free(buffer);
+                buffer = NULL;
+                continue;
+            }
+        };
 
         if (level_comment == 0 && buffer[0] == '#') {
             ptr = buffer+1;
@@ -916,7 +958,9 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
                 }
 
                 free(directive);
+                directive = NULL;
                 free(buffer);
+                buffer = NULL;
 
                 success = preprocess(actualpath, f_target, constants, lineref);
 
@@ -925,8 +969,10 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
 
                 current_target = source;
 
-                if (success)
+                if (success) {
+                    fclose(f_source);
                     return success;
+                }
                 continue;
             } else if (strcmp(directive, "define") == 0) {
                 if (!constants_parse(constants, directive_args, line)) {
@@ -986,6 +1032,7 @@ int preprocess(char *source, FILE *f_target, struct constants *constants, struct
         }
 
         free(buffer);
+        buffer = NULL;
     }
 
     fclose(f_source);

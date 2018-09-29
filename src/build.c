@@ -21,30 +21,43 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-#include "sha1.h"
+#include "../lib/sha1.h"
 #include "args.h"
 #include "binarize.h"
 #include "filesystem.h"
 #include "utils.h"
 #include "sign.h"
 #include "build.h"
+#include "unistdwrapper.h"
 
 
 bool file_allowed(char *filename) {
     int i;
     extern struct arguments args;
 
-    if (strcmp(filename, "$PBOPREFIX$") == 0)
+    char *filename_sanitized;
+    filename_sanitized = strrchr(filename, PATHSEP);
+    if (filename_sanitized == NULL) {
+        filename_sanitized = filename;
+    }
+    else {
+        filename_sanitized++;
+    }
+
+    if (stricmp(filename_sanitized, "$PBOPREFIX$") == 0)
+        return false;
+    if (stricmp(filename_sanitized, "$PBOPREFIX$.txt") == 0)
+        return false;
+    if (stricmp(filename_sanitized, "config.cpp") == 0)
         return false;
 
     for (i = 0; i < args.num_excludefiles; i++) {
-        if (matches_glob(filename, args.excludefiles[i]))
+        if (matches_glob(filename_sanitized, args.excludefiles[i]))
             return false;
     }
 
@@ -60,8 +73,8 @@ int binarize_callback(char *root, char *source, char *junk) {
     filename[0] = 0;
     strcat(filename, source + strlen(root) + 1);
 
-    if (!file_allowed(filename))
-        return 0;
+   // if (!file_allowed(filename))
+   //     return 0;
 
     strncpy(target, source, sizeof(target));
 
@@ -272,7 +285,7 @@ int cmd_build() {
                     k = 0;
                     valid = true;
                 } else if (valid) {
-                    strcat(addonprefix, buffer);
+                    strcpy(addonprefix, buffer);
                 } else {
                     break;
                 }
@@ -355,7 +368,9 @@ int cmd_build() {
 
         if (access(configpath, F_OK) != -1) {
 #ifdef _WIN32
-            if (!DeleteFile(configpath)) {
+            wchar_t wc_configpath[2048];
+            mbstowcs(wc_configpath, configpath, 2048);
+            if (!DeleteFile(wc_configpath)) {
 #else
             if (remove(configpath)) {
 #endif
@@ -369,6 +384,7 @@ int cmd_build() {
     current_target = args.positionals[1];
 
     // write header extensions
+    infof("Writing PBO Header...\n");
     f_target = fopen(args.positionals[2], "wb");
     fwrite("\0sreV\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0prefix\0", 28, 1, f_target);
     // write addonprefix with windows pathseps
@@ -411,6 +427,7 @@ int cmd_build() {
     fclose(f_target);
 
     // write headers to file
+    infof("Writing PBO Header...\n");
     if (traverse_directory(tempfolder, write_header_to_pbo, args.positionals[2])) {
         errorf("Failed to write some file header(s) to PBO.\n");
         remove_file(args.positionals[2]);
@@ -419,6 +436,7 @@ int cmd_build() {
     }
 
     // header boundary
+    infof("Writing PBO Header Boundary...\n");
     f_target = fopen(args.positionals[2], "ab");
     if (!f_target) {
         errorf("Failed to write header boundary to PBO.\n");
@@ -431,6 +449,7 @@ int cmd_build() {
     fclose(f_target);
 
     // write contents to file
+    infof("Writing PBO Contents...\n");
     if (traverse_directory(tempfolder, write_data_to_pbo, args.positionals[2])) {
         errorf("Failed to pack some file(s) into the PBO.\n");
         remove_file(args.positionals[2]);
@@ -439,6 +458,7 @@ int cmd_build() {
     }
 
     // write checksum to file
+    infof("Writing PBO Checksum...\n");
     unsigned char checksum[20];
     hash_file(args.positionals[2], checksum);
     f_target = fopen(args.positionals[2], "ab");
@@ -451,6 +471,7 @@ int cmd_build() {
     fputc(0, f_target);
     fwrite(checksum, 20, 1, f_target);
     fclose(f_target);
+    infof("Written PBO %s\n", args.positionals[2]);
 
     // remove temp folder
     if (remove_folder(tempfolder)) {
@@ -460,6 +481,7 @@ int cmd_build() {
 
     // sign pbo
     if (args.privatekey) {
+        infof("Signing PBO...\n");
         char keyname[512];
         char path_signature[2048];
 

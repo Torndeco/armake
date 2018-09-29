@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 
 #ifdef _WIN32
 #define PATHSEP '\\'
@@ -30,11 +31,18 @@
 #endif
 
 
+#define strlens(s) (s==NULL?0:strlen(s))
 #ifdef _WIN32
-ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp);
+#define wcslens(s) (s==NULL?0:wcslen(s))
+#endif
 
+#ifdef _WIN32
+typedef intptr_t ssize_t;
+ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp);
 ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
 #endif
+
+bool file_exists(char *path);
 
 int get_temp_name(char *target, char *suffix);
 

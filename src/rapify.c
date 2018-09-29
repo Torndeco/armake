@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
 
 #ifdef _WIN32
@@ -34,6 +33,7 @@
 #include "preprocess.h"
 #include "rapify.h"
 #include "rapify.tab.h"
+#include "unistdwrapper.h"
 
 
 struct definitions *new_definitions() {
@@ -356,10 +356,12 @@ int rapify_file(char *source, char *target) {
 
 #ifdef _WIN32
     char temp_name[2048];
-    if (!GetTempFileName(".", "amk", 0, temp_name)) {
+    wchar_t wc_temp_name[2048];
+    if (!GetTempFileName(L".", L"amk", 0, wc_temp_name)) {
         errorf("Failed to get temp file name (system error %i).\n", GetLastError());
         return 1;
     }
+    wcstombs(temp_name, wc_temp_name, 2048);
     f_temp = fopen(temp_name, "wb+");
 #else
     f_temp = tmpfile();
@@ -368,7 +370,7 @@ int rapify_file(char *source, char *target) {
     if (!f_temp) {
         errorf("Failed to open temp file.\n");
 #ifdef _WIN32
-        DeleteFile(temp_name);
+        remove_file(temp_name);
 #endif
         return 1;
     }
@@ -393,7 +395,7 @@ int rapify_file(char *source, char *target) {
         errorf("Failed to preprocess %s.\n", source);
         fclose(f_temp);
 #ifdef _WIN32
-        DeleteFile(temp_name);
+        remove_file(temp_name);
 #endif
         return success;
     }
@@ -432,16 +434,18 @@ int rapify_file(char *source, char *target) {
 
 #ifdef _WIN32
     char temp_name2[2048];
+    wchar_t wc_temp_name2[2048];
 #endif
 
     // Rapify file
     if (strcmp(target, "-") == 0) {
 #ifdef _WIN32
-        if (!GetTempFileName(".", "amk", 0, temp_name2)) {
+        if (!GetTempFileName(L".", L"amk", 0, wc_temp_name2)) {
             errorf("Failed to get temp file name (system error %i).\n", GetLastError());
             return 1;
         }
-        f_target = fopen(temp_name, "wb+");
+        wcstombs(temp_name2, wc_temp_name2, 2048);
+        f_target = fopen(temp_name2, "wb+");
 #else
         f_target = tmpfile();
 #endif
@@ -449,7 +453,7 @@ int rapify_file(char *source, char *target) {
         if (!f_target) {
             errorf("Failed to open temp file.\n");
 #ifdef _WIN32
-            DeleteFile(temp_name2);
+            remove_file(temp_name);
 #endif
             return 1;
         }
@@ -489,9 +493,9 @@ int rapify_file(char *source, char *target) {
     fclose(f_target);
 
 #ifdef _WIN32
-    DeleteFile(temp_name);
+    remove_file(temp_name);
     if (strcmp(target, "-") == 0)
-        DeleteFile(temp_name2);
+        remove_file(temp_name2);
 #endif
 
     constants_free(constants);

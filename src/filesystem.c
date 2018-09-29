@@ -17,7 +17,6 @@
  */
 
 
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -37,8 +36,10 @@
 #include <unistd.h>
 #endif
 
+#include "args.h"
 #include "filesystem.h"
 #include "utils.h"
+#include "unistdwrapper.h"
 
 
 #ifdef _WIN32
@@ -88,9 +89,59 @@ ssize_t getline(char **buf, size_t *bufsiz, FILE *fp) {
 #endif
 
 
+bool file_exists(char *path) {
+#ifdef _WIN32
+    size_t len = (strlens(path) + 1);
+    wchar_t *wc_path = safe_malloc(sizeof(*wc_path) * len);
+    mbstowcs(wc_path, path, len);
+    unsigned long attrs = GetFileAttributes(wc_path);
+    free(wc_path);
+    return (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    return (access(path, F_OK) != -1);
+#endif
+}
+
+
+void get_temp_path(char *path, size_t bufsize) {
+    extern struct arguments args;
+    if (strlens(args.temppath) == 0) {
+#ifdef _WIN32
+        path[0] = 0;
+        wchar_t wc_path[2048];
+        wchar_t wc_path_tmp[2048];
+        if (GetTempPath(bufsize, wc_path_tmp) > 0) {
+            if ((wc_path_tmp[wcslens(wc_path_tmp) - 1]) == '\\') {
+                wc_path_tmp[wcslens(wc_path_tmp) - 1] = 0;
+            }
+            swprintf(wc_path, 2048, L"%ls\\armake\\%ld\\", wc_path_tmp, GetCurrentProcessId());
+            wcstombs(path, wc_path, bufsize);
+        }
+        else {
+            path = TEMPPATH;
+        }
+        // TODO Add command switch to remove old directories, windows apparently doesn't remove temp files at startup.
+#else
+        strncpy(path, TEMPPATH, bufsize);
+        sprintf(path, "%s/armake/%ld/", path, getpid());
+#endif
+    }
+    else {
+        strcpy(path, args.temppath);
+    }
+    if ((path[strlen(path) - 1]) == PATHSEP) {
+        path[strlen(path) - 1] = 0;
+    }
+}
+
+
 int get_temp_name(char *target, char *suffix) {
 #ifdef _WIN32
-    if (!GetTempFileName(".", "amk", 0, target)) { return 1; }
+    wchar_t *wc_target = safe_malloc(sizeof(*wc_target) * (strlen(target) + 1));
+    mbstowcs(wc_target, target, 2048);
+    if (!GetTempFileName(L".", L"amk", 0, wc_target)) { return 1; }
+    wcstombs(target, wc_target, (strlen(target) + 1));
+    free(wc_target);
     strcat(target, suffix);
     return 0;
 #else
@@ -109,7 +160,9 @@ int create_folder(char *path) {
 
 #ifdef _WIN32
 
-    if (!CreateDirectory(path, NULL)) {
+    wchar_t wc_path[2048];
+    mbstowcs(wc_path, path, 2048);
+    if (!CreateDirectory(wc_path, NULL)) {
         if (GetLastError() == ERROR_ALREADY_EXISTS)
             return -2;
         else
@@ -174,27 +227,17 @@ int create_temp_folder(char *addon, char *temp_folder, size_t bufsize) {
      * on success.
      */
 
-    char temp[2048] = TEMPPATH;
+    char temp[2048];
     char addon_sanitized[2048];
     int i;
 
-#ifdef _WIN32
-    temp[0] = 0;
-    GetTempPath(sizeof(temp), temp);
-    strcat(temp, "armake\\");
-#endif
-
-    temp[strlen(temp) - 1] = 0;
+    get_temp_path(temp, 2048);
 
     for (i = 0; i <= strlen(addon); i++)
-        addon_sanitized[i] = (addon[i] == '\\' || addon[i] == '/') ? '_' : addon[i];
+        addon_sanitized[i] = (addon[i] == '\\' || addon[i] == '/') ? PATHSEP : addon[i];
 
-    // find a free one
-    for (i = 0; i < 1024; i++) {
-        snprintf(temp_folder, bufsize, "%s_%s_%i%c", temp, addon_sanitized, i, PATHSEP);
-        if (access(temp_folder, F_OK) == -1)
-            break;
-    }
+    snprintf(temp_folder, bufsize, "%s%c%s%c", temp, PATHSEP, addon_sanitized, PATHSEP);
+
 
     if (i == 1024)
         return -1;
@@ -209,7 +252,9 @@ int remove_file(char *path) {
      */
 
 #ifdef _WIN32
-    return !DeleteFile(path);
+    wchar_t wc_path[2048];
+    mbstowcs(wc_path, path, 2048);
+    return !DeleteFile(wc_path);
 #else
     return (remove(path) * -1);
 #endif
@@ -221,6 +266,13 @@ int remove_folder(char *folder) {
      * Recursively removes a folder tree. Returns a negative integer on
      * failure and 0 on success.
      */
+
+    char temp_rootfolder[2048];
+    get_temp_path(temp_rootfolder, sizeof(temp_rootfolder));
+    if (strncmp(folder, temp_rootfolder, strlens(temp_rootfolder)) != 0) {
+        errorf("Remove folder error path: %s, Temp Path: %s\n", folder, temp_rootfolder);
+        return -1;
+    }
 
 #ifdef _WIN32
 
@@ -252,7 +304,8 @@ int copy_file(char *source, char *target) {
      */
 
     // Create the containing folder
-    char containing[strlen(target) + 1];
+    //char containing[strlen(target) + 1];
+    char *containing = safe_malloc(sizeof(*containing) * (strlen(target) + 1));
     int lastsep = 0;
     int i;
     for (i = 0; i < strlen(target); i++) {
@@ -263,12 +316,26 @@ int copy_file(char *source, char *target) {
     containing[lastsep] = 0;
 
     if (create_folders(containing))
+    {
+        free(containing);
         return -1;
+    }
+    free(containing);
 
 #ifdef _WIN32
 
-    if (!CopyFile(source, target, 0))
+    wchar_t wc_source[2048];
+    mbstowcs(wc_source, source, 2048);
+    wchar_t wc_target[2048];
+    mbstowcs(wc_target, target, 2048);
+
+    if (!CopyFile(wc_source, wc_target, 0)) {
+        char err[256];
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(),
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), err, 255, NULL);
+        errorf("Error CopyFile ERROR:%s, source:%s, dest:%s\n", err, source, target);
         return -2;
+    }
 
 #else
 
@@ -355,23 +422,29 @@ int traverse_directory_recursive(char *root, char *cwd, int (*callback)(char *, 
     WIN32_FIND_DATA file;
     HANDLE handle = NULL;
     char mask[2048];
+    wchar_t wc_mask[2048];
+
     int success;
 
     if (cwd[strlen(cwd) - 1] == '\\')
         cwd[strlen(cwd) - 1] = 0;
 
-    GetFullPathName(cwd, 2048, mask, NULL);
-    sprintf(mask, "%s\\*", mask);
+    wchar_t wc_cwd[2048];
+    mbstowcs(wc_cwd, cwd, 2048);
+    GetFullPathName(wc_cwd, 2048, wc_mask, NULL);
+    wcstombs(cwd, wc_cwd, 2048);
+    swprintf(wc_mask, 2048, L"%s\\*", wc_mask);
 
-    handle = FindFirstFile(mask, &file);
+    handle = FindFirstFile(wc_mask, &file);
     if (handle == INVALID_HANDLE_VALUE)
         return 1;
 
     do {
-        if (strcmp(file.cFileName, ".") == 0 || strcmp(file.cFileName, "..") == 0)
+        if (wcscmp(file.cFileName, L".") == 0 || wcscmp(file.cFileName, L"..") == 0)
             continue;
 
-        sprintf(mask, "%s\\%s", cwd, file.cFileName);
+        swprintf(wc_mask, 2048, L"%s\\%s", wc_cwd, file.cFileName);
+        wcstombs(mask, wc_mask, 2048);
         if (file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             traverse_directory_recursive(root, mask, callback, third_arg);
         } else {
@@ -457,12 +530,15 @@ int copy_callback(char *source_root, char *source, char *target_root) {
     if (strstr(source, source_root) != source)
         return -1;
 
-    char target[strlen(source) + strlen(target_root) + 1]; // assume worst case
+    //char target[strlen(source) + strlen(target_root) + 1]; // assume worst case
+    char *target = safe_malloc(sizeof(*target)* (strlen(source) + strlen(target_root) + 1 + 1)); // assume worst case
     target[0] = 0;
     strcat(target, target_root);
     strcat(target, source + strlen(source_root));
 
-    return copy_file(source, target);
+    int status = copy_file(source, target);
+    free(target);
+    return status;
 }
 
 

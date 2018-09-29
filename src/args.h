@@ -42,6 +42,7 @@ struct arguments {
     char **excludefiles;
     int num_headerextensions;
     char **headerextensions;
+    char *temppath;
 } args;
 
 struct arg_option {
